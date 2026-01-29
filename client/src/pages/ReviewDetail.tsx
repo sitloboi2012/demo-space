@@ -4,7 +4,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, FileText, CheckCircle2, UploadCloud, BrainCircuit, Play, Loader2, AlertCircle } from "lucide-react";
+import { ArrowLeft, FileText, CheckCircle2, UploadCloud, BrainCircuit, Play, Loader2, AlertCircle, ShieldCheck } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
