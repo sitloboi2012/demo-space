@@ -85,6 +85,16 @@ export const api = {
         400: errorSchemas.validation,
       },
     }
+  },
+  icd: {
+    generate: {
+      method: 'POST' as const,
+      path: '/api/reviews/:reviewId/icd/generate',
+      responses: {
+        200: z.object({ icd: z.string() }),
+        400: errorSchemas.validation,
+      },
+    }
   }
 };
 

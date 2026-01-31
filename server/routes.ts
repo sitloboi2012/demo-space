@@ -144,6 +144,62 @@ export async function registerRoutes(
     }
   });
 
+  // --- ICD Generation ---
+  app.post(api.icd.generate.path, async (req, res) => {
+    const reviewId = Number(req.params.reviewId);
+    
+    // Get compliance items
+    const complianceItems = await storage.getComplianceItems(reviewId);
+    if (complianceItems.length === 0) {
+      return res.status(400).json({ message: "Run compliance analysis first before generating ICD." });
+    }
+
+    const review = await storage.getReview(reviewId);
+    const docs = await storage.getDocuments(reviewId);
+    
+    try {
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are a spacecraft systems engineer creating Interface Control Documents (ICDs). 
+Generate a professional ICD following this structure:
+1. Introduction & Scope - Purpose and document scope
+2. Abbreviations - Key terms used
+3. Mechanical Interface - Mounting, dimensions, mass budget
+4. Electrical Data Interface - Communication protocols, data rates
+5. Electrical Power Interface - Power requirements, voltage rails
+6. Thermal Interface - Operating temps, heat dissipation
+
+Format the output in clean Markdown with proper headings, tables, and professional language.`
+          },
+          {
+            role: "user",
+            content: `Generate a draft Interface Control Document for the satellite payload integration review.
+
+Review Title: ${review?.title || 'Payload Integration Review'}
+
+Documents in context:
+${docs.map(d => `- ${d.name} (${d.type})`).join('\n')}
+
+Compliance Requirements Extracted:
+${complianceItems.map(item => `- [${item.category}] ${item.requirement} | Limit: ${item.limit} | Measured: ${item.measured} | Status: ${item.status}`).join('\n')}
+
+Generate a complete ICD draft with realistic technical specifications based on typical 6U nanosatellite payloads. Include tables for power channels, data interfaces, and thermal limits.`
+          }
+        ],
+      });
+
+      const icdContent = response.choices[0].message.content || "";
+      res.json({ icd: icdContent });
+
+    } catch (error) {
+      console.error("ICD Generation failed:", error);
+      res.status(500).json({ message: "Failed to generate ICD document" });
+    }
+  });
+
   // Seed Data
   await seedDatabase();
 

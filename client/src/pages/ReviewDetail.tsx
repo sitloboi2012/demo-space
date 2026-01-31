@@ -1,10 +1,11 @@
 import { useParams, Link } from "wouter";
-import { useReview, useReviewDocuments, useComplianceMatrix, useUploadDocument, useGenerateCompliance } from "@/hooks/use-reviews";
+import { useState } from "react";
+import { useReview, useReviewDocuments, useComplianceMatrix, useUploadDocument, useGenerateCompliance, useGenerateICD } from "@/hooks/use-reviews";
 import { Sidebar } from "@/components/Sidebar";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, FileText, CheckCircle2, UploadCloud, BrainCircuit, Play, Loader2, AlertCircle, ShieldCheck } from "lucide-react";
+import { ArrowLeft, FileText, CheckCircle2, UploadCloud, BrainCircuit, Play, Loader2, AlertCircle, ShieldCheck, FileOutput, X, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +13,8 @@ export default function ReviewDetail() {
   const params = useParams();
   const id = Number(params.id);
   const { toast } = useToast();
+  const [icdContent, setIcdContent] = useState<string | null>(null);
+  const [showIcdPanel, setShowIcdPanel] = useState(false);
 
   const { data: review, isLoading: reviewLoading } = useReview(id);
   const { data: documents, isLoading: docsLoading } = useReviewDocuments(id);
@@ -19,6 +22,7 @@ export default function ReviewDetail() {
   
   const uploadMutation = useUploadDocument();
   const generateMutation = useGenerateCompliance();
+  const icdMutation = useGenerateICD();
 
   const handleUpload = (type: string, name: string) => {
     // In a real app, this would trigger a file picker
@@ -58,6 +62,39 @@ export default function ReviewDetail() {
         });
       }
     });
+  };
+
+  const handleGenerateICD = () => {
+    icdMutation.mutate(id, {
+      onSuccess: (data) => {
+        setIcdContent(data.icd);
+        setShowIcdPanel(true);
+        toast({
+          title: "ICD Generated",
+          description: "Draft Interface Control Document has been created.",
+        });
+      },
+      onError: () => {
+        toast({
+          title: "Generation Failed",
+          description: "Could not generate ICD. Please try again.",
+          variant: "destructive"
+        });
+      }
+    });
+  };
+
+  const handleDownloadICD = () => {
+    if (!icdContent) return;
+    const blob = new Blob([icdContent], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ICD-${review?.title?.replace(/\s+/g, '-') || 'Draft'}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   if (reviewLoading || docsLoading) {
@@ -161,31 +198,64 @@ export default function ReviewDetail() {
               })}
             </div>
 
-            <div className="mt-auto bg-card rounded-xl p-5 border border-primary/20 shadow-lg shadow-primary/5">
-              <h3 className="font-display font-bold mb-2 flex items-center gap-2 text-primary">
-                <BrainCircuit className="w-5 h-5" />
-                AI Analysis
-              </h3>
-              <p className="text-xs text-muted-foreground mb-4">
-                Extract requirements from documents and run compliance check against limits.
-              </p>
-              <Button 
-                className="w-full gap-2 bg-gradient-to-r from-primary to-blue-600 hover:from-primary/90 hover:to-blue-600/90 shadow-md transition-all"
-                onClick={handleGenerate}
-                disabled={generateMutation.isPending || !documents?.length}
-              >
-                {generateMutation.isPending ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 fill-current" />
-                    Run Compliance Audit
-                  </>
-                )}
-              </Button>
+            <div className="mt-auto space-y-4">
+              <div className="bg-card rounded-xl p-5 border border-primary/20 shadow-lg shadow-primary/5">
+                <h3 className="font-display font-bold mb-2 flex items-center gap-2 text-primary">
+                  <BrainCircuit className="w-5 h-5" />
+                  AI Analysis
+                </h3>
+                <p className="text-xs text-muted-foreground mb-4">
+                  Extract requirements from documents and run compliance check against limits.
+                </p>
+                <Button 
+                  className="w-full gap-2 bg-gradient-to-r from-primary to-blue-600 hover:from-primary/90 hover:to-blue-600/90 shadow-md transition-all"
+                  onClick={handleGenerate}
+                  disabled={generateMutation.isPending || !documents?.length}
+                  data-testid="button-run-analysis"
+                >
+                  {generateMutation.isPending ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 fill-current" />
+                      Run Compliance Audit
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {compliance && compliance.length > 0 && (
+                <div className="bg-card rounded-xl p-5 border border-emerald-200 shadow-md">
+                  <h3 className="font-display font-bold mb-2 flex items-center gap-2 text-emerald-700">
+                    <FileOutput className="w-5 h-5" />
+                    Generate ICD
+                  </h3>
+                  <p className="text-xs text-muted-foreground mb-4">
+                    Create a draft Interface Control Document based on the compliance analysis.
+                  </p>
+                  <Button 
+                    className="w-full gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-md transition-all"
+                    onClick={handleGenerateICD}
+                    disabled={icdMutation.isPending}
+                    data-testid="button-generate-icd"
+                  >
+                    {icdMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Generating ICD...
+                      </>
+                    ) : (
+                      <>
+                        <FileOutput className="w-4 h-4" />
+                        Generate Draft ICD
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
           </aside>
 
@@ -250,6 +320,63 @@ export default function ReviewDetail() {
               )}
             </div>
           </section>
+
+          {/* ICD Preview Panel */}
+          {showIcdPanel && icdContent && (
+            <aside className="w-[500px] border-l border-border bg-card flex flex-col shadow-xl">
+              <div className="p-4 border-b border-border flex items-center justify-between bg-emerald-50">
+                <div className="flex items-center gap-2">
+                  <FileOutput className="w-5 h-5 text-emerald-700" />
+                  <h3 className="font-display font-bold text-emerald-800">Draft ICD</h3>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button 
+                    size="sm" 
+                    variant="outline" 
+                    className="gap-1.5"
+                    onClick={handleDownloadICD}
+                    data-testid="button-download-icd"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download
+                  </Button>
+                  <Button 
+                    size="icon" 
+                    variant="ghost"
+                    onClick={() => setShowIcdPanel(false)}
+                    data-testid="button-close-icd"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+              <div className="flex-1 overflow-auto p-6">
+                <div className="prose prose-sm max-w-none prose-headings:font-display prose-headings:text-foreground prose-p:text-muted-foreground prose-table:text-sm prose-th:bg-muted/30 prose-th:p-2 prose-td:p-2 prose-td:border prose-th:border">
+                  {icdContent.split('\n').map((line, i) => {
+                    if (line.startsWith('# ')) {
+                      return <h1 key={i} className="text-xl font-bold mt-6 mb-3 text-foreground">{line.slice(2)}</h1>;
+                    }
+                    if (line.startsWith('## ')) {
+                      return <h2 key={i} className="text-lg font-bold mt-5 mb-2 text-foreground border-b pb-1">{line.slice(3)}</h2>;
+                    }
+                    if (line.startsWith('### ')) {
+                      return <h3 key={i} className="text-base font-semibold mt-4 mb-2 text-foreground">{line.slice(4)}</h3>;
+                    }
+                    if (line.startsWith('| ')) {
+                      return <pre key={i} className="text-xs font-mono bg-muted/20 px-2 py-0.5 overflow-x-auto">{line}</pre>;
+                    }
+                    if (line.startsWith('- ')) {
+                      return <li key={i} className="text-sm text-muted-foreground ml-4">{line.slice(2)}</li>;
+                    }
+                    if (line.trim() === '') {
+                      return <div key={i} className="h-2" />;
+                    }
+                    return <p key={i} className="text-sm text-muted-foreground mb-2">{line}</p>;
+                  })}
+                </div>
+              </div>
+            </aside>
+          )}
         </div>
       </main>
     </div>

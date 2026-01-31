@@ -114,3 +114,21 @@ export function useGenerateCompliance() {
     onSuccess: (_, reviewId) => queryClient.invalidateQueries({ queryKey: [api.compliance.list.path, reviewId] }),
   });
 }
+
+// ============================================
+// ICD GENERATION HOOKS
+// ============================================
+
+export function useGenerateICD() {
+  return useMutation({
+    mutationFn: async (reviewId: number) => {
+      const url = buildUrl(api.icd.generate.path, { reviewId });
+      const res = await fetch(url, {
+        method: api.icd.generate.method,
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to generate ICD");
+      return api.icd.generate.responses[200].parse(await res.json());
+    },
+  });
+}
