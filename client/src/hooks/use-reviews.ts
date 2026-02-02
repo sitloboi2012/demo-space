@@ -132,3 +132,22 @@ export function useGenerateICD() {
     },
   });
 }
+
+// ============================================
+// NEGOTIATION CONTEXT HOOKS
+// ============================================
+
+export function useSummarizeNegotiation() {
+  return useMutation({
+    mutationFn: async (data: { emailThread: string; requirement: string }) => {
+      const res = await fetch(api.negotiation.summarize.path, {
+        method: api.negotiation.summarize.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to summarize negotiation");
+      return api.negotiation.summarize.responses[200].parse(await res.json());
+    },
+  });
+}

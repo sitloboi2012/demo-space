@@ -1,13 +1,24 @@
 import { useParams, Link } from "wouter";
 import { useState } from "react";
-import { useReview, useReviewDocuments, useComplianceMatrix, useUploadDocument, useGenerateCompliance, useGenerateICD } from "@/hooks/use-reviews";
+import { useReview, useReviewDocuments, useComplianceMatrix, useUploadDocument, useGenerateCompliance, useGenerateICD, useSummarizeNegotiation } from "@/hooks/use-reviews";
 import { Sidebar } from "@/components/Sidebar";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, FileText, CheckCircle2, UploadCloud, BrainCircuit, Play, Loader2, AlertCircle, ShieldCheck, FileOutput, X, Download } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ArrowLeft, FileText, CheckCircle2, UploadCloud, BrainCircuit, Play, Loader2, AlertCircle, ShieldCheck, FileOutput, X, Download, Plus, MessageSquare, ChevronDown, FileCheck2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+
+type NegotiationContext = {
+  summary: string;
+  hasWaiver: boolean;
+  waiverType?: string;
+  rawEmail: string;
+};
 
 export default function ReviewDetail() {
   const params = useParams();
@@ -15,6 +26,14 @@ export default function ReviewDetail() {
   const { toast } = useToast();
   const [icdContent, setIcdContent] = useState<string | null>(null);
   const [showIcdPanel, setShowIcdPanel] = useState(false);
+  
+  // Negotiation context state (session-level persistence)
+  const [contexts, setContexts] = useState<Record<number, NegotiationContext>>({});
+  const [contextDialogOpen, setContextDialogOpen] = useState(false);
+  const [activeItemId, setActiveItemId] = useState<number | null>(null);
+  const [activeRequirement, setActiveRequirement] = useState<string>("");
+  const [emailInput, setEmailInput] = useState("");
+  const [expandedContexts, setExpandedContexts] = useState<Record<number, boolean>>({});
 
   const { data: review, isLoading: reviewLoading } = useReview(id);
   const { data: documents, isLoading: docsLoading } = useReviewDocuments(id);
@@ -23,6 +42,7 @@ export default function ReviewDetail() {
   const uploadMutation = useUploadDocument();
   const generateMutation = useGenerateCompliance();
   const icdMutation = useGenerateICD();
+  const summarizeMutation = useSummarizeNegotiation();
 
   const handleUpload = (type: string, name: string) => {
     // In a real app, this would trigger a file picker
@@ -95,6 +115,53 @@ export default function ReviewDetail() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const openContextDialog = (itemId: number, requirement: string) => {
+    setActiveItemId(itemId);
+    setActiveRequirement(requirement);
+    setEmailInput("");
+    setContextDialogOpen(true);
+  };
+
+  const handleSummarizeEmail = () => {
+    if (!activeItemId || !emailInput.trim()) return;
+    
+    summarizeMutation.mutate(
+      { emailThread: emailInput, requirement: activeRequirement },
+      {
+        onSuccess: (data) => {
+          setContexts(prev => ({
+            ...prev,
+            [activeItemId]: {
+              summary: data.summary,
+              hasWaiver: data.hasWaiver,
+              waiverType: data.waiverType,
+              rawEmail: emailInput
+            }
+          }));
+          setContextDialogOpen(false);
+          setEmailInput("");
+          toast({
+            title: data.hasWaiver ? "Waiver Detected" : "Context Added",
+            description: data.hasWaiver 
+              ? `Agreement found: ${data.waiverType}`
+              : "Email thread has been summarized.",
+          });
+        },
+        onError: () => {
+          toast({
+            title: "Summarization Failed",
+            description: "Could not analyze the email thread.",
+            variant: "destructive"
+          });
+        }
+      }
+    );
+  };
+
+  const toggleContextExpanded = (itemId: number) => {
+    setExpandedContexts(prev => ({ ...prev, [itemId]: !prev[itemId] }));
   };
 
   if (reviewLoading || docsLoading) {
@@ -286,21 +353,85 @@ export default function ReviewDetail() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {compliance.map((item) => (
-                        <TableRow key={item.id} className="group hover:bg-muted/10 transition-colors">
-                          <TableCell className="font-mono text-xs text-muted-foreground">REQ-{item.id}</TableCell>
-                          <TableCell className="font-medium text-sm">{item.category}</TableCell>
-                          <TableCell className="text-sm">{item.requirement}</TableCell>
-                          <TableCell className="font-mono text-xs">{item.limit}</TableCell>
-                          <TableCell className="font-mono text-xs font-semibold">{item.measured}</TableCell>
-                          <TableCell>
-                            <StatusBadge status={item.status} />
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">
-                            {item.action}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {compliance.map((item) => {
+                        const context = contexts[item.id];
+                        const isAmberOrRed = item.status === 'Deviation' || item.status === 'Fail';
+                        const isExpanded = expandedContexts[item.id];
+
+                        return (
+                          <TableRow key={item.id} className="group hover:bg-muted/10 transition-colors">
+                            <TableCell className="font-mono text-xs text-muted-foreground">REQ-{item.id}</TableCell>
+                            <TableCell className="font-medium text-sm">{item.category}</TableCell>
+                            <TableCell className="text-sm">
+                              <div className="space-y-2">
+                                <div className="flex items-start gap-2">
+                                  <span>{item.requirement}</span>
+                                  {context?.hasWaiver && (
+                                    <Badge className="bg-amber-100 text-amber-800 border-amber-300 shrink-0">
+                                      <FileCheck2 className="w-3 h-3 mr-1" />
+                                      Waiver Applied
+                                    </Badge>
+                                  )}
+                                </div>
+                                {context && (
+                                  <Collapsible open={isExpanded} onOpenChange={() => toggleContextExpanded(item.id)}>
+                                    <CollapsibleTrigger asChild>
+                                      <button className="flex items-center gap-1 text-xs text-primary hover:underline" data-testid={`button-toggle-context-${item.id}`}>
+                                        <MessageSquare className="w-3 h-3" />
+                                        <span>Evidence of Agreement</span>
+                                        <ChevronDown className={cn("w-3 h-3 transition-transform", isExpanded && "rotate-180")} />
+                                      </button>
+                                    </CollapsibleTrigger>
+                                    <CollapsibleContent className="mt-2">
+                                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs">
+                                        <p className="font-medium text-blue-900 mb-1">Technical Consensus:</p>
+                                        <p className="text-blue-800">{context.summary}</p>
+                                        {context.waiverType && (
+                                          <p className="mt-2 text-amber-700 font-medium">
+                                            Waiver: {context.waiverType}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </CollapsibleContent>
+                                  </Collapsible>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">{item.limit}</TableCell>
+                            <TableCell className="font-mono text-xs font-semibold">{item.measured}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <StatusBadge status={item.status} />
+                                {isAmberOrRed && !context && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    onClick={() => openContextDialog(item.id, item.requirement)}
+                                    data-testid={`button-add-context-${item.id}`}
+                                  >
+                                    <Plus className="w-4 h-4 text-primary" />
+                                  </Button>
+                                )}
+                                {context && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-6 w-6"
+                                    onClick={() => openContextDialog(item.id, item.requirement)}
+                                    data-testid={`button-edit-context-${item.id}`}
+                                  >
+                                    <MessageSquare className="w-4 h-4 text-blue-500" />
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground group-hover:text-foreground transition-colors">
+                              {item.action}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
@@ -379,6 +510,70 @@ export default function ReviewDetail() {
           )}
         </div>
       </main>
+
+      {/* Negotiation Context Dialog */}
+      <Dialog open={contextDialogOpen} onOpenChange={setContextDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-primary" />
+              Add Negotiation Context
+            </DialogTitle>
+            <DialogDescription>
+              Paste email threads or waiver notes to provide context for compliance deviations.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            <div className="bg-muted/30 rounded-lg p-3 border">
+              <p className="text-xs text-muted-foreground mb-1">Related Requirement:</p>
+              <p className="text-sm font-medium">{activeRequirement}</p>
+            </div>
+            
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Email Thread / Waiver Notes</label>
+              <Textarea
+                placeholder="Paste the email thread or meeting notes here...
+
+Example:
+From: payload-team@example.com
+Subject: RE: Vibration limit discussion
+
+Hi Team,
+After reviewing the test data, we agree to use the alternative damping material which will bring us within spec..."
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                className="min-h-[200px] font-mono text-xs"
+                data-testid="textarea-email-input"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setContextDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleSummarizeEmail}
+              disabled={summarizeMutation.isPending || !emailInput.trim()}
+              className="gap-2"
+              data-testid="button-summarize-email"
+            >
+              {summarizeMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  <BrainCircuit className="w-4 h-4" />
+                  Summarize Context
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

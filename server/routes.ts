@@ -144,6 +144,55 @@ export async function registerRoutes(
     }
   });
 
+  // --- Negotiation Summarizer ---
+  app.post(api.negotiation.summarize.path, async (req, res) => {
+    try {
+      const input = api.negotiation.summarize.input.parse(req.body);
+      
+      const response = await openai.chat.completions.create({
+        model: "gpt-5.1",
+        messages: [
+          {
+            role: "system",
+            content: `You are a spacecraft systems engineer analyzing email threads for compliance discussions.
+Your task is to:
+1. Summarize the technical consensus from the email thread
+2. Detect if a waiver or deviation agreement was reached
+3. Extract the key decision points
+
+Return JSON with:
+- summary: A 1-2 sentence summary of the technical consensus
+- hasWaiver: true if a deviation/waiver was agreed upon, false otherwise
+- waiverType: If hasWaiver is true, describe the type (e.g., "Material substitution approved", "Thermal limit exception granted")`
+          },
+          {
+            role: "user",
+            content: `Requirement being discussed: ${input.requirement}
+
+Email thread content:
+${input.emailThread}
+
+Analyze this email thread and extract the technical consensus.`
+          }
+        ],
+        response_format: { type: "json_object" }
+      });
+
+      const content = response.choices[0].message.content || "{}";
+      const result = JSON.parse(content);
+
+      res.json({
+        summary: result.summary || "No clear consensus found.",
+        hasWaiver: result.hasWaiver || false,
+        waiverType: result.waiverType
+      });
+
+    } catch (error) {
+      console.error("Negotiation summarization failed:", error);
+      res.status(500).json({ message: "Failed to summarize email thread" });
+    }
+  });
+
   // --- ICD Generation ---
   app.post(api.icd.generate.path, async (req, res) => {
     const reviewId = Number(req.params.reviewId);

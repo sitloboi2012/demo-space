@@ -95,6 +95,24 @@ export const api = {
         400: errorSchemas.validation,
       },
     }
+  },
+  negotiation: {
+    summarize: {
+      method: 'POST' as const,
+      path: '/api/summarize-negotiation',
+      input: z.object({
+        emailThread: z.string(),
+        requirement: z.string(),
+      }),
+      responses: {
+        200: z.object({
+          summary: z.string(),
+          hasWaiver: z.boolean(),
+          waiverType: z.string().optional(),
+        }),
+        400: errorSchemas.validation,
+      },
+    }
   }
 };
 
