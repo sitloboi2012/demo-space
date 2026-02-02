@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { insertReviewSchema, insertDocumentSchema, insertComplianceItemSchema, reviews, documents, complianceItems } from './schema';
 
+export type CreateReviewRequest = z.infer<typeof insertReviewSchema>;
+
 export const errorSchemas = {
   validation: z.object({
     message: z.string(),

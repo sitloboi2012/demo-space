@@ -67,12 +67,12 @@ export function useReviewDocuments(reviewId: number) {
 export function useUploadDocument() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ reviewId, ...data }: { reviewId: number; name: string; type: string; fileUrl: string }) => {
+    mutationFn: async ({ reviewId, name, type, fileUrl }: { reviewId: number; name: string; type: string; fileUrl: string; status?: string }) => {
       const url = buildUrl(api.documents.upload.path, { reviewId });
       const res = await fetch(url, {
         method: api.documents.upload.method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+        body: JSON.stringify({ name, type, fileUrl }),
         credentials: "include",
       });
       if (!res.ok) throw new Error("Failed to upload document");
