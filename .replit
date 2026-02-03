@@ -40,3 +40,6 @@ waitForPort = 5000
 
 [agent]
 integrations = ["javascript_openai_ai_integrations:2.0.0"]
+
+[objectStorage]
+defaultBucketID = "replit-objstore-1b63ea94-125e-4312-b6d5-3ef203733cd7"
