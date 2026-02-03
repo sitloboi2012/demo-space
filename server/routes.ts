@@ -4,11 +4,29 @@ import { storage } from "./storage";
 import { api } from "@shared/routes";
 import { z } from "zod";
 import OpenAI from "openai";
+import multer from "multer";
+import { fileStorage } from "./file-storage";
 
 // Initialize OpenAI client using the integration env vars
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+});
+
+// Configure multer for file uploads (using memory storage)
+const upload = multer({
+  storage: multer.memoryStorage(), // Store files in memory, then upload to object storage
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    // Only accept PDF files
+    if (file.mimetype === "application/pdf") {
+      cb(null, true);
+    } else {
+      cb(new Error("Only PDF files are allowed"));
+    }
+  },
 });
 
 export async function registerRoutes(
@@ -47,6 +65,53 @@ export async function registerRoutes(
     res.json(docs);
   });
 
+  // File upload endpoint with multipart/form-data
+  app.post("/api/reviews/:reviewId/documents/upload", upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
+
+      const reviewId = Number(req.params.reviewId);
+      const { type } = req.body;
+
+      if (!type) {
+        return res.status(400).json({ message: "Document type is required" });
+      }
+
+      // Generate unique filename for storage
+      const timestamp = Date.now();
+      const randomSuffix = Math.round(Math.random() * 1e9);
+      const sanitizedFilename = req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const storageKey = `${reviewId}/${type}/${timestamp}_${randomSuffix}_${sanitizedFilename}`;
+
+      // Upload file to storage (automatically uses Replit Object Storage or local filesystem)
+      const uploadResult = await fileStorage.uploadFile(storageKey, req.file.buffer);
+
+      if (!uploadResult.ok) {
+        console.error("File storage upload failed:", uploadResult.error);
+        return res.status(500).json({ message: "Failed to upload file to storage" });
+      }
+
+      // Create document record with storage key
+      const doc = await storage.createDocument({
+        reviewId,
+        name: req.file.originalname,
+        type,
+        fileUrl: storageKey, // Store the storage key
+        status: "Uploaded",
+      });
+
+      res.status(201).json(doc);
+    } catch (err) {
+      console.error("File upload error:", err);
+      if (err instanceof Error && err.message === "Only PDF files are allowed") {
+        return res.status(400).json({ message: err.message });
+      }
+      res.status(500).json({ message: "Failed to upload file" });
+    }
+  });
+
   app.post(api.documents.upload.path, async (req, res) => {
     try {
       const reviewId = Number(req.params.reviewId);
@@ -69,6 +134,40 @@ export async function registerRoutes(
   app.delete(api.documents.delete.path, async (req, res) => {
     await storage.deleteDocument(Number(req.params.id));
     res.status(204).send();
+  });
+
+  // Download document from object storage
+  app.get("/api/documents/:id/download", async (req, res) => {
+    try {
+      const docId = Number(req.params.id);
+
+      // Get document metadata from database
+      const docs = await storage.getDocuments(0); // Get all docs (we'll filter)
+      const doc = docs.find(d => d.id === docId);
+
+      if (!doc) {
+        return res.status(404).json({ message: "Document not found" });
+      }
+
+      // Download from storage (automatically uses Replit Object Storage or local filesystem)
+      const downloadResult = await fileStorage.downloadFile(doc.fileUrl);
+
+      if (!downloadResult.ok || !downloadResult.value) {
+        console.error("File storage download failed:", downloadResult.error);
+        return res.status(500).json({ message: "Failed to download file from storage" });
+      }
+
+      // Set response headers
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${doc.name}"`);
+      res.setHeader("Content-Length", downloadResult.value.length.toString());
+
+      // Send the file buffer (downloadResult.value is Uint8Array)
+      res.send(downloadResult.value);
+    } catch (err) {
+      console.error("File download error:", err);
+      res.status(500).json({ message: "Failed to download file" });
+    }
   });
 
   // --- Compliance ---

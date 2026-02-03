@@ -1,6 +1,8 @@
 import { useParams, Link } from "wouter";
-import { useState } from "react";
-import { useReview, useReviewDocuments, useComplianceMatrix, useUploadDocument, useGenerateCompliance, useGenerateICD, useSummarizeNegotiation } from "@/hooks/use-reviews";
+import { useState, useRef } from "react";
+import { useReview, useReviewDocuments, useComplianceMatrix, useGenerateCompliance, useGenerateICD, useSummarizeNegotiation } from "@/hooks/use-reviews";
+import { useQueryClient } from "@tanstack/react-query";
+import { api } from "@shared/routes";
 import { Sidebar } from "@/components/Sidebar";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -26,7 +28,8 @@ export default function ReviewDetail() {
   const { toast } = useToast();
   const [icdContent, setIcdContent] = useState<string | null>(null);
   const [showIcdPanel, setShowIcdPanel] = useState(false);
-  
+  const [uploadingFile, setUploadingFile] = useState<string | null>(null);
+
   // Negotiation context state (session-level persistence)
   const [contexts, setContexts] = useState<Record<number, NegotiationContext>>({});
   const [contextDialogOpen, setContextDialogOpen] = useState(false);
@@ -38,39 +41,82 @@ export default function ReviewDetail() {
   const { data: review, isLoading: reviewLoading } = useReview(id);
   const { data: documents, isLoading: docsLoading } = useReviewDocuments(id);
   const { data: compliance, isLoading: complianceLoading } = useComplianceMatrix(id);
-  
-  const uploadMutation = useUploadDocument();
+
+  const queryClient = useQueryClient();
   const generateMutation = useGenerateCompliance();
   const icdMutation = useGenerateICD();
   const summarizeMutation = useSummarizeNegotiation();
 
-  const handleUpload = (type: string, name: string) => {
-    // In a real app, this would trigger a file picker
-    // For this prototype, we simulate uploading the specific files mentioned in requirements
-    
-    // Static assets mapped to types
-    const staticAssets: Record<string, string> = {
-      'Host PUG': '/assets/Momentus_Users_Guide_Feb_2023_REV4_1769671028969.pdf',
-      'Payload Spec': '/assets/datasheet-spiral-blue-space-edge-computer-se-2-sc8bob_1769671043574.pdf'
-    };
+  // File input refs for each document type
+  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-    uploadMutation.mutate(
-      {
-        reviewId: id,
-        name: name,
-        type: type,
-        fileUrl: staticAssets[type] || '',
-        status: 'Uploaded'
-      },
-      {
-        onSuccess: () => {
-          toast({
-            title: "File Uploaded",
-            description: `${name} has been successfully added to the review context.`,
-          });
-        }
+  const handleUploadClick = (type: string) => {
+    // Trigger the hidden file input
+    const fileInput = fileInputRefs.current[type];
+    if (fileInput) {
+      fileInput.click();
+    }
+  };
+
+  const handleFileChange = async (type: string, event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (file.type !== "application/pdf") {
+      toast({
+        title: "Invalid File Type",
+        description: "Please upload a PDF file only.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate file size (10MB limit)
+    if (file.size > 10 * 1024 * 1024) {
+      toast({
+        title: "File Too Large",
+        description: "Please upload a file smaller than 10MB.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setUploadingFile(type);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("type", type);
+
+      const response = await fetch(`/api/reviews/${id}/documents/upload`, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error("Upload failed");
       }
-    );
+
+      // Invalidate documents query to refresh the list
+      await queryClient.invalidateQueries({ queryKey: [api.documents.list.path, id] });
+
+      toast({
+        title: "File Uploaded",
+        description: `${file.name} has been successfully uploaded.`,
+      });
+    } catch (error) {
+      toast({
+        title: "Upload Failed",
+        description: "Failed to upload file. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingFile(null);
+      // Reset the input so the same file can be uploaded again
+      event.target.value = "";
+    }
   };
 
   const handleGenerate = () => {
@@ -239,26 +285,35 @@ export default function ReviewDetail() {
                     
                     {isUploaded ? (
                       <div className="flex gap-2">
-                         <a 
-                           href={uploadedDoc.fileUrl} 
-                           target="_blank" 
-                           rel="noreferrer" 
+                         <a
+                           href={`/api/documents/${uploadedDoc.id}/download`}
+                           target="_blank"
+                           rel="noreferrer"
                            className="text-xs text-primary font-medium hover:underline"
                          >
                            View Document
                          </a>
                       </div>
                     ) : (
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
-                        className="w-full gap-2 text-xs h-8"
-                        onClick={() => handleUpload(reqDoc.type, reqDoc.defaultName)}
-                        disabled={uploadMutation.isPending}
-                      >
-                        {uploadMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />}
-                        Upload File
-                      </Button>
+                      <>
+                        <input
+                          ref={(el) => (fileInputRefs.current[reqDoc.type] = el)}
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          className="hidden"
+                          onChange={(e) => handleFileChange(reqDoc.type, e)}
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full gap-2 text-xs h-8"
+                          onClick={() => handleUploadClick(reqDoc.type)}
+                          disabled={uploadingFile === reqDoc.type}
+                        >
+                          {uploadingFile === reqDoc.type ? <Loader2 className="w-3 h-3 animate-spin" /> : <UploadCloud className="w-3 h-3" />}
+                          Upload File
+                        </Button>
+                      </>
                     )}
                   </div>
                 );
